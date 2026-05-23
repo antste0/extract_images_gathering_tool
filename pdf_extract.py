@@ -1,22 +1,23 @@
-import fitz  # PyMuPDF
-import os
-from PIL import Image
 import io
+import os
 
-# ===== KONFIGURACJA =====
+import fitz  # pip install pymupdf
+from PIL import Image
+
+
+# config
 
 PDF_PATH = "pdf/RD2026_PL.pdf"
 OUTPUT_DIR = "output"
 
-# minimalne wymiary obrazów
+# minimum image dimensions
 MIN_WIDTH = 100
 MIN_HEIGHT = 100
 
-# zakres stron (liczone normalnie od 1)
+# page range (starting from 1)
 START_PAGE = 157
 END_PAGE = 175
 
-# =========================
 
 
 def save_images_from_pdf(
@@ -33,7 +34,7 @@ def save_images_from_pdf(
 
     total_pages = len(doc)
 
-    # zabezpieczenie zakresu
+    # clamp page range
     start_page = max(1, start_page)
     end_page = min(total_pages, end_page)
 
@@ -43,7 +44,7 @@ def save_images_from_pdf(
     print(f"PDF ma {total_pages} stron")
     print(f"Przetwarzanie stron: {start_page} -> {end_page}")
 
-    # range() używa indeksów od 0
+    # range() starts indexing from 0
     for page_index in range(start_page - 1, end_page):
 
         page = doc[page_index]
@@ -69,7 +70,7 @@ def save_images_from_pdf(
 
                 width, height = image.size
 
-                # filtr wymiarów
+                # filter by dimensions
                 if width >= min_width and height >= min_height:
 
                     filename = (
