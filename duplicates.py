@@ -2,87 +2,92 @@ import os
 from PIL import Image
 import imagehash
 
+# config
+
+FOLDER = "output"
+SIMILARITY_THRESHOLD = 70
+DRY_RUN = False  # false - delete right away; true - summarise how many are similar
+
+IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp')
+
 def similarity_percent(hash1, hash2):
-    """
-    Oblicza procent podobieństwa hashy.
-    """
     max_bits = len(hash1.hash.flatten())
     distance = hash1 - hash2
-    similarity = (1 - distance / max_bits) * 100
-    return similarity
+    return (1 - distance / max_bits) * 100
 
+def compute_hash(path):
+    with Image.open(path) as img:
+        w, h = img.size
+        resolution = w * h
+        img = img.convert("RGB").resize((512, 512), Image.Resampling.LANCZOS)
+        img_hash = imagehash.phash(img, hash_size=16)
+    return img_hash, resolution
 
-def normalize_image(img, size=(512, 512)):
-    """
-    Ujednolica obraz:
-    - ignoruje rozdzielczość,
-    - usuwa wpływ proporcji,
-    - konwertuje do RGB.
-    """
-    img = img.convert("RGB")
-    img = img.resize(size, Image.Resampling.LANCZOS)
-    return img
+def find_similar(img_hash, hashes, threshold):
+    for i, (existing_hash, existing_file, existing_res) in enumerate(hashes):
+        similarity = similarity_percent(img_hash, existing_hash)
+        if similarity >= threshold:
+            return i, existing_file, existing_res, similarity
+    return None
 
+def pick_lower_res(path, filename, resolution, folder_path, match):
+    _, existing_file, existing_res, similarity = match
+    if resolution >= existing_res:
+        to_delete = (os.path.join(folder_path, existing_file), existing_file)
+        keep = "new"
+    else:
+        to_delete = (path, filename)
+        keep = "existing"
+    return to_delete, keep, similarity
 
-def remove_similar_images(folder_path, similarity_threshold=95, dry_run=True):
+def handle_similar(img_hash, filename, resolution, hashes, folder_path, match, dry_run, deleted):
+    to_delete, keep, similarity = pick_lower_res(
+        os.path.join(folder_path, filename), filename, resolution, folder_path, match
+    )
+    print(f"SIMILAR ({similarity:.2f}%): {filename} == {match[1]}")
+
+    if keep == "new":
+        hashes[match[0]] = (img_hash, filename, resolution)
+
+    if not dry_run:
+        os.remove(to_delete[0])
+        deleted.append(to_delete[1])
+        print(f"DELETED (lower res): {to_delete[1]}")
+
+def remove_similar_images(folder_path, similarity_threshold, dry_run):
     hashes = []
     deleted = []
+    similar_count = 0
 
     for filename in os.listdir(folder_path):
-        if filename.lower().endswith((
-            '.png', '.jpg', '.jpeg',
-            '.bmp', '.gif', '.webp'
-        )):
-            path = os.path.join(folder_path, filename)
+        if not filename.lower().endswith(IMAGE_EXTENSIONS):
+            continue
 
-            try:
-                with Image.open(path) as img:
+        path = os.path.join(folder_path, filename)
 
-                    # ignore resolution
-                    img = normalize_image(img)
+        try:
+            img_hash, resolution = compute_hash(path)
+            match = find_similar(img_hash, hashes, similarity_threshold)
 
-                    img_hash = imagehash.phash(img, hash_size=16)
+            if match:
+                similar_count += 1
+                handle_similar(img_hash, filename, resolution, hashes, folder_path, match, dry_run, deleted)
+            else:
+                hashes.append((img_hash, filename, resolution))
 
-                found_similar = False
+        except Exception as e:
+            print(f"ERROR: {filename} -> {e}")
 
-                for existing_hash, existing_file in hashes:
-                    similarity = similarity_percent(
-                        img_hash,
-                        existing_hash
-                    )
+    return deleted, similar_count
 
-                    if similarity >= similarity_threshold:
+if __name__ == "__main__":
+    removed, similar = remove_similar_images(
+        FOLDER,
+        similarity_threshold=SIMILARITY_THRESHOLD,
+        dry_run=DRY_RUN,
+    )
 
-                        print(
-                            f"PODOBNE ({similarity:.2f}%): "
-                            f"{filename} == {existing_file}"
-                        )
-
-                        found_similar = True
-
-                        if not dry_run:
-                            os.remove(path)
-                            deleted.append(filename)
-                            print(f"USUNIĘTO: {filename}")
-
-                        break
-
-                if not found_similar:
-                    hashes.append((img_hash, filename))
-
-            except Exception as e:
-                print(f"Błąd: {filename} -> {e}")
-
-    return deleted
-
-# folder to search for duplicates
-folder = "output"
-
-removed = remove_similar_images(
-    folder,
-    similarity_threshold=70,
-    dry_run=False
-)
-
-print("\n--- PODSUMOWANIE ---")
-print(f"Usunięte pliki: {len(removed)}")
+    if DRY_RUN:
+        print(f"\nDRY RUN: {similar} similar image(s) found, nothing deleted")
+    else:
+        print("\nDONE:", len(removed), "deleted")
